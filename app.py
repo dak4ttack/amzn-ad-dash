@@ -85,15 +85,16 @@ if target_file is not None:
     if bid_strategy_col and df[bid_strategy_col].astype(str).str.contains("maximize off-site impressions", case=False, na=False).any():
         st.error('🚨 CRITICAL WARNING: Dataset contains campaigns with "maximize off-site impressions" strategy! Please review immediately.', icon="🚨")
     
-    # Check if necessary columns exist (using 'Max Bid', but gracefully fail if missing)
-    if 'Max Bid' not in df.columns:
-        st.warning("⚠️ Could not find a 'Max Bid' column. Your file might be a Campaign-level report instead of a Keyword/Targeting level report. Please upload a standard bulk sheet.")
-        # Fallback to Campaign budget amount for demonstration purposes if Max Bid is absent
-        if 'Campaign budget amount' in df.columns:
-            st.info("💡 Found 'Campaign budget amount'. Using it as a temporary stand-in for 'Max Bid' so you can see the logic work!")
-            df['Max Bid'] = df['Campaign budget amount']
+    # Rename Campaign budget amount to Daily Limit for UI clarity
+    if 'Campaign budget amount' in df.columns:
+        df.rename(columns={'Campaign budget amount': 'Daily Limit'}, inplace=True)
+            
+    # Normalize 'ACOS' to 'ACoS' for the logic to catch it regardless of capitalization
+    acos_col = next((c for c in df.columns if c.lower() == 'acos'), None)
+    if acos_col and acos_col != 'ACoS':
+        df.rename(columns={acos_col: 'ACoS'}, inplace=True)
     
-    if 'Max Bid' in df.columns and 'ACoS' in df.columns:
+    if 'Daily Limit' in df.columns and 'ACoS' in df.columns:
         # Initialize custom columns if they don't exist yet in session state for this file
         if 'processed_df' not in st.session_state or st.session_state.get('last_uploaded_name') != file_name_for_state:
             df['BSR Push (Loss Leader)'] = False
@@ -101,22 +102,22 @@ if target_file is not None:
             # 3. Automated Logic & Default States
             df['parsed_acos'] = df['ACoS'].apply(process_acos)
             
-            def calculate_suggested_bid(row):
+            def calculate_suggested_limit(row):
                 # Placeholder for complex logic branches
                 # TODO: Bleeder keywords - High impressions / zero sales
                 # TODO: Hidden Gems - High CTR
                 
-                max_bid = parse_currency(row['Max Bid'])
+                daily_limit = parse_currency(row['Daily Limit'])
                 acos = row['parsed_acos']
                 
                 # Baseline logic: If ACoS > 25% and ACoS < 35%, decrease by 5% rounded down to nearest cent
                 if 0.25 < acos < 0.35:
-                    new_bid = max_bid * 0.95
-                    return math.floor(new_bid * 100) / 100.0
+                    new_limit = daily_limit * 0.95
+                    return math.floor(new_limit * 100) / 100.0
                 
-                return max_bid
+                return daily_limit
                 
-            df['Suggested Bid'] = df.apply(calculate_suggested_bid, axis=1)
+            df['Suggested Daily Limit'] = df.apply(calculate_suggested_limit, axis=1)
             
             # Store in session state to allow edits
             st.session_state.processed_df = df
@@ -124,7 +125,7 @@ if target_file is not None:
         
         # 4. Manual Overrides (Interactive UI)
         st.subheader("Bulk Operations Editor")
-        st.caption("Edit 'Suggested Bid' or toggle 'BSR Push (Loss Leader)' below. All other columns are read-only for safety.")
+        st.caption("Edit 'Suggested Daily Limit' or toggle 'BSR Push (Loss Leader)' below. All other columns are read-only for safety.")
         
         # Configure column editing permissions
         editor_df = st.session_state.processed_df.copy()
@@ -134,11 +135,11 @@ if target_file is not None:
             editor_df = editor_df.drop(columns=['parsed_acos'])
         
         # Place custom columns at the front for easy access
-        cols_order = ['BSR Push (Loss Leader)', 'Suggested Bid', 'Max Bid', 'ACoS']
+        cols_order = ['BSR Push (Loss Leader)', 'Suggested Daily Limit', 'Daily Limit', 'ACoS']
         cols_order += [c for c in editor_df.columns if c not in cols_order]
         editor_df = editor_df[cols_order]
         
-        disabled_cols = [c for c in editor_df.columns if c not in ['BSR Push (Loss Leader)', 'Suggested Bid']]
+        disabled_cols = [c for c in editor_df.columns if c not in ['BSR Push (Loss Leader)', 'Suggested Daily Limit']]
         
         edited_df = st.data_editor(
             editor_df,
@@ -153,14 +154,16 @@ if target_file is not None:
         
         def prepare_export_df(df):
             export_df = df.copy()
-            # If BSR Push is False, apply Suggested Bid, otherwise keep original Max Bid
-            export_df['Max Bid'] = export_df.apply(
-                lambda r: r['Max Bid'] if r['BSR Push (Loss Leader)'] else r['Suggested Bid'], 
+            # If BSR Push is False, apply Suggested Daily Limit, otherwise keep original Daily Limit
+            export_df['Daily Limit'] = export_df.apply(
+                lambda r: r['Daily Limit'] if r['BSR Push (Loss Leader)'] else r['Suggested Daily Limit'], 
                 axis=1
             )
             # Strip out custom columns
-            columns_to_drop = ['BSR Push (Loss Leader)', 'Suggested Bid']
+            columns_to_drop = ['BSR Push (Loss Leader)', 'Suggested Daily Limit']
             export_df = export_df.drop(columns=columns_to_drop)
+            # Rename Daily Limit back to Campaign budget amount for Amazon
+            export_df.rename(columns={'Daily Limit': 'Campaign budget amount'}, inplace=True)
             return export_df
             
         final_export_df = prepare_export_df(edited_df)
@@ -168,15 +171,21 @@ if target_file is not None:
         csv_buffer = io.StringIO()
         final_export_df.to_csv(csv_buffer, index=False)
         
+        # Generate dynamic filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        export_filename = f"bulk_upload_ready_{timestamp}.csv"
+        
         st.download_button(
             label="⬇️ Export to Amazon",
             data=csv_buffer.getvalue(),
-            file_name="bulk_upload_ready.csv",
+            file_name=export_filename,
             mime="text/csv",
             type="primary"
         )
     else:
         if 'ACoS' not in df.columns:
             st.warning("⚠️ Could not find an 'ACoS' column in your dataset.")
+        if 'Daily Limit' not in df.columns:
+            st.warning("⚠️ Could not find a 'Campaign budget amount' column in your dataset.")
 else:
     st.warning("Could not find any CSV files in the `DATA` directory. Please add your bulk operations CSV there to get started.")
