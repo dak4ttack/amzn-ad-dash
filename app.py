@@ -74,8 +74,9 @@ if target_file is not None:
             st.session_state.processed_df = df
             st.session_state.last_uploaded_name = file_name_for_state
         
-        st.subheader("Bulk Operations Editor")
-        st.caption("Edit 'Daily Limit' below. All other columns are read-only for safety.")
+        st.write("") # Vertical spacing
+        export_container = st.container()
+        st.write("") # Vertical spacing
         
         editor_df = st.session_state.processed_df.copy()
         
@@ -112,6 +113,13 @@ if target_file is not None:
         for col in cols_to_drop:
             if col in editor_df.columns:
                 editor_df.drop(columns=[col], inplace=True)
+                
+        if 'CPM' in editor_df.columns:
+            cpm_idx = editor_df.columns.get_loc('CPM')
+            cols_after_cpm = editor_df.columns[cpm_idx + 1:]
+            for col in cols_after_cpm:
+                if col != 'Viewable CTR (vCTR)':
+                    editor_df.drop(columns=[col], inplace=True)
         # -------------------------------
 
         cols_order = ['Daily Limit', 'ACoS']
@@ -120,15 +128,14 @@ if target_file is not None:
         
         disabled_cols = [c for c in editor_df.columns if c != 'Daily Limit']
         
+        calculated_height = (len(editor_df) + 1) * 36 + 3
         edited_df = st.data_editor(
             editor_df,
             disabled=disabled_cols,
             hide_index=True,
             use_container_width=True,
-            height=600
+            height=calculated_height
         )
-        
-        st.subheader("Export")
         
         def prepare_export_df(edited_ui_df):
             # Map edited UI data back to the ORIGINAL raw dataframe to preserve Amazon-required formats
@@ -147,13 +154,14 @@ if target_file is not None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         export_filename = f"bulk_upload_ready_{timestamp}.csv"
         
-        st.download_button(
-            label="⬇️ Export to Amazon",
-            data=csv_buffer.getvalue(),
-            file_name=export_filename,
-            mime="text/csv",
-            type="primary"
-        )
+        with export_container:
+            st.download_button(
+                label="⬇️ Export to Amazon",
+                data=csv_buffer.getvalue(),
+                file_name=export_filename,
+                mime="text/csv",
+                type="primary"
+            )
     else:
         if 'ACoS' not in df.columns:
             st.warning("⚠️ Could not find an 'ACoS' column in your dataset.")
