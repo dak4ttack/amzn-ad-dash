@@ -82,17 +82,24 @@ if target_file is not None:
         editor_df = st.session_state.processed_df.copy()
         
         # --- UI FORMATTING FOR EYES ---
-        def format_acos_display(val):
-            if pd.isna(val) or val == 0:
-                return "0"
-            percent_val = val * 100
-            if percent_val.is_integer():
-                return f"{int(percent_val)}%"
-            else:
-                s = f"{percent_val:.2f}".rstrip('0').rstrip('.')
-                return f"{s}%"
+        def parse_to_float(val):
+            if pd.isna(val): return 0.0
+            if isinstance(val, (int, float)): return float(val)
+            val_clean = str(val).replace('$', '').replace('€', '').replace('£', '').replace(',', '').strip()
+            try: return float(val_clean)
+            except: return 0.0
+
+        editor_df['ACoS'] = editor_df['parsed_acos'] * 100
+        
+        for c in ['Total cost (converted)', 'Total cost', 'Sales (converted)', 'Sales', 'Daily Limit', 'CPC (converted)', 'CPC']:
+            if c in editor_df.columns:
+                editor_df[c] = editor_df[c].apply(parse_to_float)
                 
-        editor_df['ACoS'] = editor_df['parsed_acos'].apply(format_acos_display)
+        if 'Purchases' in editor_df.columns:
+            editor_df['Purchases'] = pd.to_numeric(editor_df['Purchases'], errors='coerce').fillna(0).astype(int)
+            
+        if 'Total cost (converted)' in editor_df.columns:
+            editor_df.sort_values(by='Total cost (converted)', ascending=False, inplace=True)
         
         if 'Country' in editor_df.columns:
             editor_df['Country'] = editor_df['Country'].replace('United States', 'US')
@@ -138,7 +145,15 @@ if target_file is not None:
         
         editor_df = editor_df[cols_order]
         
-        col_config = {}
+        col_config = {
+            "ACoS": st.column_config.NumberColumn("ACoS", format="%.2f %%")
+        }
+        
+        if 'Daily Limit' in editor_df.columns:
+            col_config['Daily Limit'] = st.column_config.NumberColumn("Daily Limit", format="%.2f")
+        if 'Purchases' in editor_df.columns:
+            col_config['Purchases'] = st.column_config.NumberColumn("Purchases")
+            
         rename_mapping = {}
         for col in editor_df.columns:
             match = re.search(r'^(.*?)\s*\((.*?)\)$', col)
@@ -154,10 +169,18 @@ if target_file is not None:
                     counter += 1
                     
                 rename_mapping[col] = new_col_name
-                col_config[new_col_name] = st.column_config.Column(
-                    new_col_name,
-                    help=f"({parenthetical})"
-                )
+                
+                if any(x in base_name.lower() for x in ['cost', 'sales', 'cpc', 'cpm']):
+                    col_config[new_col_name] = st.column_config.NumberColumn(
+                        new_col_name,
+                        help=f"({parenthetical})",
+                        format="%.2f"
+                    )
+                else:
+                    col_config[new_col_name] = st.column_config.Column(
+                        new_col_name,
+                        help=f"({parenthetical})"
+                    )
                 
         editor_df.rename(columns=rename_mapping, inplace=True)
         
