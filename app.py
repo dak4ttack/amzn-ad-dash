@@ -101,13 +101,17 @@ if target_file is not None:
             
         cols_to_drop = ['Retailer', 'Detail page views', 'parsed_acos']
         
-        # Remove the new to brand columns after ROAS
         cols_to_drop.extend([
             'Purchases (new to brand)',
             'Percent of purchases new to brand',
             'Sales (new to brand) (converted)',
             'Sales (new to brand)',
-            'Percent of sales new to brand'
+            'Percent of sales new to brand',
+            'Long-term sales (converted)',
+            'Long-term sales',
+            'Long-term ROAS',
+            'User reach',
+            'Viewable impressions'
         ])
         
         for col in cols_to_drop:
@@ -122,9 +126,39 @@ if target_file is not None:
                     editor_df.drop(columns=[col], inplace=True)
         # -------------------------------
 
-        cols_order = ['Daily Limit', 'ACoS']
-        cols_order += [c for c in editor_df.columns if c not in cols_order]
+        cols_order = ['Total cost (converted)', 'ACoS', 'Purchases', 'Sales (converted)', 'Daily Limit']
+        cols_order = [c for c in cols_order if c in editor_df.columns]
+        
+        right_cols = ['State', 'Status', 'Type', 'Portfolio name']
+        middle_cols = [c for c in editor_df.columns if c not in cols_order and c not in right_cols]
+        
+        cols_order += middle_cols
+        cols_order += [c for c in right_cols if c in editor_df.columns]
+        
         editor_df = editor_df[cols_order]
+        
+        col_config = {}
+        rename_mapping = {}
+        for col in editor_df.columns:
+            match = re.search(r'^(.*?)\s*\((.*?)\)$', col)
+            if match:
+                base_name = match.group(1).strip()
+                parenthetical = match.group(2).strip()
+                new_col_name = f"{base_name} *"
+                
+                original_new_name = new_col_name
+                counter = 1
+                while new_col_name in rename_mapping.values() or new_col_name in editor_df.columns:
+                    new_col_name = f"{original_new_name} {counter}"
+                    counter += 1
+                    
+                rename_mapping[col] = new_col_name
+                col_config[new_col_name] = st.column_config.Column(
+                    new_col_name,
+                    help=f"({parenthetical})"
+                )
+                
+        editor_df.rename(columns=rename_mapping, inplace=True)
         
         disabled_cols = [c for c in editor_df.columns if c != 'Daily Limit']
         
@@ -134,7 +168,8 @@ if target_file is not None:
             disabled=disabled_cols,
             hide_index=True,
             use_container_width=True,
-            height=calculated_height
+            height=calculated_height,
+            column_config=col_config
         )
         
         def prepare_export_df(edited_ui_df):
